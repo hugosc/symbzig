@@ -18,10 +18,11 @@ pub fn main() !void {
     try stdout.print("sine'''(pi) = {}\n", .{sin.grad().grad().grad().eval(pi)});
     try stdout.print("sine''' type: {s}\n", .{@typeName(sin.grad().grad().grad())});
     //x -(- 3) + 0
-    const fun = lib.Add(lib.Add(lib.Ident(comptime_float), lib.Neg(lib.Neg(lib.Const(3.0)))), lib.Const(0));
-    try stdout.print("f = x -(- 3), f(0) = {}, f'(0) = {}\n", .{ fun.eval(0.0), fun.grad().eval(0.0) });
+    const fun = lib.Add(lib.Add(lib.Pow(lib.Ident(comptime_float), 2), lib.Neg(lib.Neg(lib.Const(3.0)))), lib.Const(0));
+    try stdout.print("f = x^2 -(- 3), f(0) = {}, f'(0) = {}\n", .{ fun.eval(0.0), fun.grad().eval(0.0) });
     const simp_fun = lib.Simplified(fun);
     try stdout.print("original:   {s}, \nsimplified: {s}\n", .{ @typeName(fun), @typeName(simp_fun) });
+    try stdout.print("derivative: {s}\n", .{@typeName(lib.Simplified(simp_fun.grad()))});
     const formula = "x";
     const form = lib.FromFormula(formula);
     try stdout.print("from formula {s}: {s}\n", .{ formula, @typeName(form) });
