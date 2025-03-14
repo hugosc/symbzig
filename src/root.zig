@@ -4,7 +4,9 @@
 const std = @import("std");
 const testing = std.testing;
 
-const Func = enum { CONST, IDENT, ADD, NEG, MUL, SINE, COSINE, POW, UNKOWN };
+pub const constant_pi = 3.141592653589793;
+pub const constant_e = 2.718281828459045;
+const Func = enum { CONST, IDENT, ADD, NEG, MUL, SINE, COSINE, POW };
 
 pub fn Const(val: comptime_float) type {
     return struct {
@@ -72,25 +74,115 @@ pub fn Mul(comptime Fun1: type, comptime Fun2: type) type {
     };
 }
 
-pub fn Pow(comptime Fun: type, exp: comptime_float) type {
+pub fn Pow(
+    comptime Base: type,
+    comptime Exp: type,
+    NotZeroProof: fn (comptime Fun: type) type,
+    ConstExpProof: fn (comptime Fun: type) type,
+) type {
     //Sad because I need to cast to float
     const F = f64;
+    const C = ConstExpProof(Exp);
+    if (C._val == 0.0) {
+        _ = NotZeroProof(Base);
+
+        return Const(0.0);
+    }
     return struct {
-        const _exp = exp;
-        const _Sub = Fun;
+        const _nzproof = NotZeroProof;
+        const _cexpproof = ConstExpProof;
+
         pub const _refl = Func.POW;
+        const _Exp = C;
+        const _Base = Base;
         pub fn eval(x: anytype) @TypeOf(x) {
-            return std.math.pow(F, Fun.eval(x), exp);
+            return std.math.pow(F, Base.eval(x), _Exp._val);
         }
+
+        fn _DerivProof(comptime C_Minus_One: type) type {
+            const V = ConstExpProof(C_Minus_One._Left);
+            return Const(V._val - 1);
+        }
+
         pub fn grad() type {
-            return Mul(Mul(Const(exp), Pow(Fun, exp - 1)), Fun.grad());
+            return Mul(
+                Mul(
+                    _Exp,
+                    Pow(
+                        Base,
+                        Add(_Exp, Const(-1)),
+                        NotZeroProof,
+                        _DerivProof,
+                    ),
+                ),
+                Base.grad(),
+            );
         }
     };
 }
 
+pub fn ObviousNotZero(comptime Fun: type) type {
+    switch (Fun._refl) {
+        Func.SINE, Func.COSINE, Func.IDENT => return void,
+        else => return ReduceConst(Fun),
+    }
+}
+
+/// the type returned is either void or Const, trust me bro
+fn _ReduceConstAux(comptime Fun: type) type {
+    switch (Fun._refl) {
+        Func.ADD => {
+            const T1 = _ReduceConstAux(Fun._Left);
+            const T2 = _ReduceConstAux(Fun._Right);
+
+            if (T1 == void or T2 == void) {
+                return void;
+            }
+
+            return Const(Fun.eval(0.0));
+        },
+        Func.MUL => {
+            const T1 = _ReduceConstAux(Fun._Left);
+            const T2 = _ReduceConstAux(Fun._Right);
+
+            if (T1 != void and T2 != void) {
+                return Const(Fun.eval(0.0));
+            }
+            if (hasConstVal(T1, 0.0) or hasConstVal(T1, 0.0)) {
+                return Const(0.0);
+            }
+            return void;
+        },
+        Func.NEG => {
+            if (_ReduceConstAux(Fun._Sub) == void) return void;
+            return Const(-Fun.eval(0.0));
+        },
+
+        Func.CONST => return Fun,
+        else => return void,
+    }
+}
+
+//Reduce expression with constant terms to Const
+pub fn ReduceConst(comptime Fun: type) type {
+    const R = _ReduceConstAux(Fun);
+
+    if (R == void) {
+        @compileError("Could not prove " ++ @typeName(Fun) ++ " is a constant function");
+    }
+    return R;
+}
+
+pub fn PowAuto(
+    comptime Base: type,
+    comptime Exp: type,
+) type {
+    return Pow(Base, Exp, ObviousNotZero, ReduceConst);
+}
+
 pub fn Sine(comptime F: type) type {
     return struct {
-        const _refl = Func.SINE;
+        pub const _refl = Func.SINE;
         pub fn eval(x: F) F {
             return @sin(x);
         }
@@ -182,22 +274,25 @@ pub fn Simplified(comptime F: type) type {
             return Mul(Simplified(F._Left), Simplified(F._Right));
         },
         Func.POW => {
-            const S = Simplified(F._Sub);
-            if (F._exp == 1.0) {
+            const S = Simplified(F._Base);
+            if (F._Exp._val == 1.0) {
                 return S;
             }
-            if (F._exp == 0.0) {
+            if (F._Exp._val == 0.0) {
                 if (hasConstVal(S, 0.0)) {
                     @compileError("Performing undefined 0^0, loser.\n");
                 } else {
                     return Const(1.0);
                 }
             }
-            return Pow(S, F._exp);
+            return Pow(S, F._Exp, F._nzproof, F._cexpproof);
         },
         else => return F,
     }
 }
+// need to define what is the BNF form of an allowed formula.
+//
+//
 
 pub fn FromFormula(comptime formula: []const u8) type {
     if (formula.len == 1 and formula[0] == 'x') {
